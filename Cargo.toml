@@ -7,4 +7,5 @@ authors = ["Christopher Chin <ctchin13@gmail.com>"]
 input = { path = "/home/yutoo/input.rs" }
 libudev-sys = "*"
 libc = "*"
+nix = "*"
 time = "*"

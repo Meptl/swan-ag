@@ -1,9 +1,10 @@
+#[macro_use] extern crate nix;
 extern crate input;
 extern crate libc;
 extern crate libudev_sys;
 extern crate time;
 
-mod key;
+mod uinput;
 
 use input::{AsRaw, Libinput, LibinputInterface};
 use input::Event::Keyboard;
@@ -72,6 +73,7 @@ fn replay_events(events: &Vec<Event>) {
 
 fn main() {
     let mut libinput = unsafe { libinput_from_udev() };
+    let mut uinput = uinput::UInput::new();
     let mut event_store = Vec::new();
 
     let record_code = 1;  // Escape
