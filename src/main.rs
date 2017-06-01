@@ -59,11 +59,17 @@ unsafe fn libinput_from_udev() -> Libinput {
 
 fn replay_events(events: &Vec<Event>, uinput: &mut UInput) {
     println!("Replay!");
+    let mut prev_event_time = 0;
 
     for e in events {
+        // Not ideal, but can't get time on generic Event.
+        let mut time = 0;
+
         match e {
             &Keyboard(Key(ref key_event)) => {
                 let key = key_event.key();
+                time = key_event.time_usec() / 1000;
+
                 match key_event.key_state() {
                     KeyState::Pressed => {
                         uinput.key_press(uinput::Key::from(key as u8));
@@ -75,6 +81,11 @@ fn replay_events(events: &Vec<Event>, uinput: &mut UInput) {
             },
             _ => println!("Unknown event in event store!")
         }
+        // Sleep for event delta time then send event
+        if prev_event_time != 0 {
+            std::thread::sleep(std::time::Duration::from_millis(time - prev_event_time));
+        }
+        prev_event_time = time;
         uinput.sync();
     }
 }
@@ -86,7 +97,6 @@ fn main() {
     let mut event_store = Vec::new();
 
     let mut recording = false;
-    let mut prev_event_time = 0;
 
     loop {
         if let Err(_) = libinput.dispatch() {
@@ -98,7 +108,6 @@ fn main() {
                 Keyboard(Key(key_event)) => {
                         let key = key_event.key();
                         let key_state = key_event.key_state();
-                        let time = key_event.time_usec();
 
                         // Perhaps check if prev_event_time was 0;
 
@@ -127,7 +136,6 @@ fn main() {
                             },
                             _ => if recording {
                                 event_store.push(Keyboard(Key(key_event)));
-                                prev_event_time = time;
                             },
                         }
 
