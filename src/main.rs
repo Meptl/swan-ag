@@ -12,8 +12,11 @@ use input::event::Event;
 use input::event::KeyboardEvent::Key;
 use input::event::keyboard::{KeyboardEventTrait, KeyState};
 use libc::{c_char, c_int, c_void};
+use uinput::UInput;
 
 const SEAT_NAME: &'static str = "seat0";
+const RECORD_KEY: uinput::Key = uinput::Key::Esc;
+const REPLAY_KEY: uinput::Key = uinput::Key::F2;
 static INTERFACE: LibinputInterface = LibinputInterface {
     open_restricted: Some(open_restricted),
     close_restricted: Some(close_restricted),
@@ -54,19 +57,25 @@ unsafe fn libinput_from_udev() -> Libinput {
     libinput
 }
 
-fn replay_events(events: &Vec<Event>) {
+fn replay_events(events: &Vec<Event>, uinput: &mut UInput) {
     println!("Replay!");
 
     for e in events {
         match e {
             &Keyboard(Key(ref key_event)) => {
                 let key = key_event.key();
-                let key_state = key_event.key_state();
-
-                println!("Replay key {}", key);
+                match key_event.key_state() {
+                    KeyState::Pressed => {
+                        uinput.key_press(uinput::Key::from(key as u8));
+                    },
+                    KeyState::Released => {
+                        uinput.key_release(uinput::Key::from(key as u8));
+                    },
+                }
             },
             _ => println!("Unknown event in event store!")
         }
+        uinput.sync();
     }
 }
 
@@ -76,10 +85,7 @@ fn main() {
     let mut uinput = uinput::UInput::new();
     let mut event_store = Vec::new();
 
-    let record_code = 1;  // Escape
-    let replay_code = 59; // F1
     let mut recording = false;
-
     let mut prev_event_time = 0;
 
     loop {
@@ -96,22 +102,37 @@ fn main() {
 
                         // Perhaps check if prev_event_time was 0;
 
-                        if key == record_code && key_state == KeyState::Released {
-                            recording = !recording;
-                            // Get current mouse position and create an AbsMove to it in
-                            // event_store.
+                        match uinput::Key::from(key as u8) {
+                            RECORD_KEY => {
+                                if key_state == KeyState::Released {
+                                    recording = !recording;
+
+                                    if recording {
+                                        // Flush the event_store
+                                        event_store.clear();
+                                        println!("Now recording.");
+                                    } else {
+                                        println!("Stopped recording.");
+                                    }
+
+                                    // Get current mouse position and create an AbsMove to it in
+                                    // event_store.
+                                }
+                            },
+                            REPLAY_KEY => {
+                                if key_state == KeyState::Released {
+                                    recording = false;
+                                    replay_events(&event_store, &mut uinput);
+                                }
+                            },
+                            _ => if recording {
+                                event_store.push(Keyboard(Key(key_event)));
+                                prev_event_time = time;
+                            },
                         }
 
-                        if key == replay_code && key_state == KeyState::Pressed {
-                            replay_events(&event_store);
-                        }
+                        //println!("Key {} {:?} [+{}ms]", key, key_state, (time - prev_event_time) / 1000);
 
-                        println!("Key {} {:?} [+{}ms]", key, key_state, (time - prev_event_time) / 1000);
-
-                        prev_event_time = time;
-                        if recording {
-                            event_store.push(Keyboard(Key(key_event)));
-                        }
                 },
                 _ => {},
             }

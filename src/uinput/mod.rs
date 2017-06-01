@@ -1,12 +1,13 @@
 #![allow(dead_code)]
+#![allow(non_camel_case_types)]
 /// A very small, restricted subset of uinput. Not too much work was done to refine this since
 /// there exists a uinput crate.
 /// That crate currently has an issue compiling (05/27)
 mod key;
 mod uinput_sys;
 
+pub use self::key::Key;
 use self::uinput_sys as ffi;
-use self::key::Key;
 use std::io::Write;
 use std::fs::{OpenOptions, File};
 use std::os::unix::io::AsRawFd;

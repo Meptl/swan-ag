@@ -10,7 +10,7 @@
 /// SC - System Contro
 ///
 #[repr(u8)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Key {
     Reserved,
     Esc,
