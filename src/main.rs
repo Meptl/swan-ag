@@ -59,12 +59,15 @@ unsafe fn libinput_from_udev() -> Libinput {
     libinput
 }
 
+/// Replay events in the event store.
+/// Modifies the pointer position.
 fn replay_events(events: &Vec<Event>, uinput: &mut UInput) {
     println!("Replay!");
     let mut prev_event_time = 0;
+    let mut pointer_err = (0_f64, 0_f64); // Total accumulated positional error
 
     for e in events {
-        // Not ideal, but can't get time on generic Event.
+        // Not ideal, but can't get time on generic Event (Devices don't have a time)
         // Each event should assign this value to msec time
         let mut time = prev_event_time;
 
@@ -83,31 +86,44 @@ fn replay_events(events: &Vec<Event>, uinput: &mut UInput) {
                 }
             },
             &Pointer(Motion(ref motion_event)) => {
+                // This assumes that the units from libinput are the same as that of the uinput
+                // device. This is WRONG and doesn't work for some devices. (i.e. my touchpad)
+                // Using accelerated data makes touchpads work slightly better but makes worse
+                // mouse control.
+                let mut x = motion_event.dx_unaccelerated();
+                let mut y = motion_event.dy_unaccelerated();
+                //println!("Rel {} {}", x, y);
                 time = motion_event.time_usec() / 1000;
 
-                uinput.rel_x(motion_event.dx() as i32);
-                uinput.rel_y(motion_event.dy() as i32);
+                uinput.rel_x(x as i32);
+                uinput.rel_y(y as i32);
+
+                // Though unaccelerated data is typically integers.
+                pointer_err.0 += x - ((x as i32) as f64);
+                pointer_err.1 += y - ((y as i32) as f64);
+
+                if pointer_err.0.abs() > 1.0 {
+                    uinput.rel_x(pointer_err.0 as i32);             // Sends 1 or -1
+                    pointer_err.0 -= (pointer_err.0 as i32) as f64; // Subtracts 1 or -1.
+                }
+                if pointer_err.1.abs() > 1.0 {
+                    uinput.rel_y(pointer_err.1 as i32);             // Sends 1 or -1
+                    pointer_err.1 -= (pointer_err.1 as i32) as f64; // Subtracts 1 or -1.
+                }
             },
+            &Pointer
             _ => {},
         }
         // Sleep for event delta time then send event
-        if prev_event_time != 0 && prev_event_time != time {
+        // Sometimes events become unordered and time is off.
+        if prev_event_time != 0 && prev_event_time < time {
             std::thread::sleep(std::time::Duration::from_millis(time - prev_event_time));
         }
         prev_event_time = time;
+
+        // For some events like motion, this is not necessary.
         uinput.sync();
     }
-}
-
-fn mouse_to_home(home: (f64, f64), curr: (f64, f64), uinput: &mut UInput) {
-    println!("Attempting to move to {:?} from {:?}", home, curr);
-    let delta_x = home.0 - curr.0;
-    let delta_y = home.1 - curr.1;
-    println!("Moving {} x and {} y", delta_x as i32, delta_y as i32);
-
-    uinput.rel_x(delta_x as i32);
-    uinput.rel_y(delta_y as i32);
-    uinput.sync();
 }
 
 fn main() {
@@ -116,21 +132,20 @@ fn main() {
     let mut event_store = Vec::new();
 
     let mut recording = false;
-    let mut pointer_record_start = (0_f64, 0_f64);
-    let mut pointer_delta = (0_f64, 0_f64); // total accumulated change in mouse since start of program
 
+    println!("Ready!");
     loop {
         if let Err(_) = libinput.dispatch() {
             panic!("libinput dispatch failed.");
         }
+        // This dispatch doesn't block and causes a busy loop. For now lets just sleep.
+        std::thread::sleep(std::time::Duration::from_millis(50));
 
         while let Some(event) = libinput.next() {
             match event {
                 Keyboard(Key(key_event)) => {
                     let key = key_event.key();
                     let key_state = key_event.key_state();
-
-                    // Perhaps check if prev_event_time was 0;
 
                     match uinput::Key::from(key as u8) {
                         RECORD_KEY => {
@@ -140,7 +155,6 @@ fn main() {
                                 if recording {
                                     // Flush the event_store
                                     event_store.clear();
-                                    pointer_record_start = pointer_delta;
                                     println!("Now recording.");
                                 } else {
                                     println!("Stopped recording.");
@@ -150,7 +164,6 @@ fn main() {
                         REPLAY_KEY => {
                             if key_state == KeyState::Released {
                                 recording = false;
-                                mouse_to_home(pointer_record_start, pointer_delta, &mut uinput);
 
                                 libinput.suspend();
                                 replay_events(&event_store, &mut uinput);
@@ -163,16 +176,6 @@ fn main() {
                     }
 
                     //println!("Key {} {:?} [+{}ms]", key, key_state, (time - prev_event_time) / 1000);
-                },
-                Pointer(Motion(pointer_motion_event)) => {
-                    pointer_delta.0 += pointer_motion_event.dx();
-                    pointer_delta.1 += pointer_motion_event.dy();
-
-                    if recording {
-                        event_store.push(Pointer(Motion(pointer_motion_event)));
-                    }
-
-                    println!("Total {:?}", pointer_delta);
                 },
                 e => {
                     if recording {
