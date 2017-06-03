@@ -10,7 +10,7 @@ use input::{AsRaw, Libinput, LibinputInterface};
 use input::Event::{Keyboard, Pointer};
 use input::event::Event;
 use input::event::KeyboardEvent::Key;
-use input::event::PointerEvent::Motion;
+use input::event::PointerEvent::{Button, Motion};
 use input::event::keyboard::{KeyboardEventTrait, KeyState};
 use input::event::pointer::PointerEventTrait;
 use libc::{c_char, c_int, c_void};
@@ -90,8 +90,8 @@ fn replay_events(events: &Vec<Event>, uinput: &mut UInput) {
                 // device. This is WRONG and doesn't work for some devices. (i.e. my touchpad)
                 // Using accelerated data makes touchpads work slightly better but makes worse
                 // mouse control.
-                let mut x = motion_event.dx_unaccelerated();
-                let mut y = motion_event.dy_unaccelerated();
+                let x = motion_event.dx_unaccelerated();
+                let y = motion_event.dy_unaccelerated();
                 //println!("Rel {} {}", x, y);
                 time = motion_event.time_usec() / 1000;
 
@@ -111,7 +111,18 @@ fn replay_events(events: &Vec<Event>, uinput: &mut UInput) {
                     pointer_err.1 -= (pointer_err.1 as i32) as f64; // Subtracts 1 or -1.
                 }
             },
-            &Pointer
+            &Pointer(Button(ref button_event)) => {
+                let button = button_event.button();
+                let value = button_event.seat_button_count();
+
+                match (button, value) {
+                    (0x110, 0) => uinput.btn_left_release(),
+                    (0x110, 1) => uinput.btn_left_press(),
+                    (0x111, 0) => uinput.btn_right_release(),
+                    (0x111, 1) => uinput.btn_right_press(),
+                    _ => println!("Unimplemented button event!")
+                }
+            },
             _ => {},
         }
         // Sleep for event delta time then send event
@@ -167,7 +178,9 @@ fn main() {
 
                                 libinput.suspend();
                                 replay_events(&event_store, &mut uinput);
-                                libinput.resume();
+                                if libinput.resume().is_err() {
+                                    panic!("Failed to resume libinput");
+                                }
                             }
                         },
                         _ => if recording {

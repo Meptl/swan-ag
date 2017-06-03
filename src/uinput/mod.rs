@@ -78,10 +78,12 @@ impl UInput {
         unsafe {
             ioctl::set_ev_bit(fd, (EventType::EV_KEY as u8) as *const ::libc::c_int).expect("ioctl failed.");
             ioctl::set_key_bit(fd, 0x110 as *const _).expect("ioctl failed."); // BTN_LEFT
-            //ioctl::set_rel_bit(fd, 0x111 as *const _).expect("ioctl failed."); // BTN_RIGHT
-            //ioctl::set_rel_bit(fd, 0x112 as *const _).expect("ioctl failed."); // BTN_MIDDLE
-            //ioctl::set_rel_bit(fd, 0x115 as *const _).expect("ioctl failed."); // BTN_FORWARD
-            //ioctl::set_rel_bit(fd, 0x116 as *const _).expect("ioctl failed."); // BTN_BACK
+            ioctl::set_key_bit(fd, 0x111 as *const _).expect("ioctl failed."); // BTN_RIGHT
+            /*
+            ioctl::set_key_bit(fd, 0x112 as *const _).expect("ioctl failed."); // BTN_MIDDLE
+            ioctl::set_key_bit(fd, 0x115 as *const _).expect("ioctl failed."); // BTN_FORWARD
+            ioctl::set_key_bit(fd, 0x116 as *const _).expect("ioctl failed."); // BTN_BACK
+            */
             for i in 1..150u8 {
                 ioctl::set_key_bit(fd, i as *const _).expect("ioctl failed."); // Most of the keyboard keys.
             }
@@ -114,6 +116,7 @@ impl UInput {
         self.ev.value = 1;
         self.write();
     }
+
     pub fn key_release(&mut self, key: Key) {
         self.ev.kind = EventType::EV_KEY as u16;
         let val: u8 = key.into();
@@ -124,6 +127,34 @@ impl UInput {
     pub fn key_click(&mut self, key: Key) {
         self.key_press(key);
         self.key_release(key);
+    }
+
+    pub fn btn_left_press(&mut self) {
+        self.ev.kind = EventType::EV_KEY as u16;
+        self.ev.code = 0x110 as u16;
+        self.ev.value = 1;
+        self.write();
+    }
+
+    pub fn btn_left_release(&mut self) {
+        self.ev.kind = EventType::EV_KEY as u16;
+        self.ev.code = 0x110 as u16;
+        self.ev.value = 0;
+        self.write();
+    }
+
+    pub fn btn_right_press(&mut self) {
+        self.ev.kind = EventType::EV_KEY as u16;
+        self.ev.code = 0x111 as u16;
+        self.ev.value = 1;
+        self.write();
+    }
+
+    pub fn btn_right_release(&mut self) {
+        self.ev.kind = EventType::EV_KEY as u16;
+        self.ev.code = 0x111 as u16;
+        self.ev.value = 0;
+        self.write();
     }
 
     pub fn sync(&mut self) {
