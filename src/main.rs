@@ -7,7 +7,7 @@ extern crate time;
 
 mod uinput;
 
-use argparse::{ArgumentParser, Store, StoreTrue};
+use argparse::{ArgumentParser, Store, StoreOption, StoreTrue};
 use input::{AsRaw, Libinput, LibinputInterface};
 use input::Event::{Keyboard, Pointer};
 use input::event::Event;
@@ -45,19 +45,22 @@ extern fn close_restricted(fd: c_int, user_data: *mut c_void) {
 
 /// Command line options for this program.
 struct Options {
-    instant: bool,
     speed: f64,
+    record_delay: Option<f64>,
+    record_length: Option<f64>
 }
 
 impl Default for Options {
     fn default() -> Self {
         Options {
-            instant: false,
             speed: 1.0,
+            record_delay: None,
+            record_length: None,
         }
     }
 }
 
+/// Create a Libinput struct from udev
 unsafe fn libinput_from_udev() -> Libinput {
     let udev = libudev_sys::udev_new();
     if udev.is_null() {
@@ -116,16 +119,16 @@ fn replay_events(options: &Options, events: &Vec<Event>, uinput: &mut UInput) {
                 uinput.rel_y(y as i32);
 
                 // Though unaccelerated data is typically integers.
-                pointer_err.0 += x - ((x as i32) as f64);
-                pointer_err.1 += y - ((y as i32) as f64);
+                pointer_err.0 += x.fract();
+                pointer_err.1 += y.fract();
 
                 if pointer_err.0.abs() > 1.0 {
-                    uinput.rel_x(pointer_err.0 as i32);             // Sends 1 or -1
-                    pointer_err.0 -= (pointer_err.0 as i32) as f64; // Subtracts 1 or -1.
+                    uinput.rel_x(pointer_err.0 as i32);      // Sends 1 or -1
+                    pointer_err.0 -= pointer_err.0.trunc(); // Subtracts 1 or -1.
                 }
                 if pointer_err.1.abs() > 1.0 {
                     uinput.rel_y(pointer_err.1 as i32);             // Sends 1 or -1
-                    pointer_err.1 -= (pointer_err.1 as i32) as f64; // Subtracts 1 or -1.
+                    pointer_err.1 -= pointer_err.1.trunc(); // Subtracts 1 or -1.
                 }
             },
             &Pointer(Button(ref button_event)) => {
@@ -144,7 +147,7 @@ fn replay_events(options: &Options, events: &Vec<Event>, uinput: &mut UInput) {
         }
         // Sleep for event delta time then send event
         // Sometimes events become unordered and time is off.
-        if !options.instant && prev_event_time != 0 && prev_event_time < time {
+        if options.speed != 0.0 && prev_event_time != 0 && prev_event_time < time {
             let delay_ms = (time - prev_event_time) as f64 / options.speed;
             std::thread::sleep(std::time::Duration::from_millis(delay_ms as u64));
         }
@@ -155,16 +158,87 @@ fn replay_events(options: &Options, events: &Vec<Event>, uinput: &mut UInput) {
     }
 }
 
-fn parse_args(options: &mut Options) {
-    let mut ap = ArgumentParser::new();
-    ap.set_description("Record input events and replay them.");
-    ap.refer(&mut options.instant)
-      .add_option(&["-i", "--instant"], StoreTrue,
-                  "Replay events with no delay between them");
-    ap.refer(&mut options.speed)
-      .add_option(&["-s", "--speed"], Store,
-                  "Replay speed modifier (default: 1.0)");
-    ap.parse_args_or_exit();
+/// Return the options struct based on command line arguments.
+fn parse_args() -> Options {
+    let mut options = Options::default();
+    let mut instant = false;
+    {
+        let mut ap = ArgumentParser::new();
+        ap.set_description("Record input events and replay them. Use the --delayed and --length option for buttonless recording.");
+        ap.refer(&mut options.record_delay)
+          .add_option(&["-d", "--delayed"], StoreOption,
+                      "Start recording after a number of seconds");
+        ap.refer(&mut instant)
+          .add_option(&["-i", "--instant"], StoreTrue,
+                      "Replay events with no delay between them");
+        ap.refer(&mut options.record_length)
+          .add_option(&["-l", "--length"], StoreOption,
+                      "Recordings will stop after a number of seconds");
+        /*
+        ap.refer(&mut options.no_flush)
+          .add_option(&["-n", "--no-flush"], StoreTrue,
+                      "Don't flush stored events between recordings");
+        ap.refer(&mut options.record_key)
+          .add_option(&["-r", "--record-key"], Store,
+                      "User specified replay key");
+        ap.refer(&mut options.no_flush)
+          .add_option(&["-p", "--replay-key"], Store,
+                      "User specified record key");
+                      */
+        ap.refer(&mut options.speed)
+          .add_option(&["-s", "--speed"], Store,
+                      "Replay speed modifier (default: 1.0)");
+        ap.parse_args_or_exit();
+    }
+
+    if instant {
+        options.speed = 0.0;
+    }
+
+    options
+}
+
+/// Returns the secs and nsecs of the given floating point seconds.
+fn f64_sec(duration: f64) -> (u64, u32) {
+    if !duration.is_finite() || duration.is_sign_negative() {
+        panic!("Invalid delay value: {}", duration);
+    }
+
+    let secs = duration as u64;
+    let nsecs = (duration.fract() * 1000000000.0) as u32;
+
+    (secs, nsecs)
+}
+
+/// Sleep for number of seconds in floating point
+fn sleep_secs(duration: f64) {
+    let (secs, nsecs) = f64_sec(duration);
+
+    let duration = std::time::Duration::new(secs, nsecs as u32);
+
+    std::thread::sleep(duration);
+}
+
+/// Check if time since given Timespec is larger than given number of seconds in floating point
+fn time_has_elapsed(start_time: time::Timespec, duration: f64) -> bool {
+    let (secs, nsecs) = f64_sec(duration);
+
+    // duration is in floating point seconds
+    let time_elapsed = (time::get_time() - start_time).to_std().expect("duration out of range.");
+
+    time_elapsed.as_secs() > secs && time_elapsed.subsec_nanos() > nsecs
+}
+
+fn start_recording(event_store: &mut Vec<Event>, recording: &mut bool, start_time: &mut time::Timespec) {
+    event_store.clear();
+    *start_time = time::get_time();
+    *recording = true;
+    println!("Started recording!");
+}
+
+fn stop_recording(recording: &mut bool) {
+    *recording = false;
+    println!("Stopped recording!");
 }
 
 fn main() {
@@ -172,18 +246,31 @@ fn main() {
     let mut uinput = uinput::UInput::new();
     let mut event_store = Vec::new();
 
-    let mut options = Options::default();
-    parse_args(&mut options);
+    let options = parse_args();
 
     let mut recording = false;
+    let mut record_start_time = time::Timespec::new(0, 0);
 
-    println!("Ready!");
+    println!("Swan-ag ready! Use ESC to record and F2 to replay.");
+
+    if let Some(duration) = options.record_delay {
+        sleep_secs(duration);
+        start_recording(&mut event_store, &mut recording, &mut record_start_time);
+    }
+
     loop {
         if let Err(_) = libinput.dispatch() {
             panic!("libinput dispatch failed.");
         }
         // This dispatch doesn't block and causes a busy loop. For now lets just sleep.
         std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Multiple events may be processed before another time check
+        if let Some(duration) = options.record_length {
+            if recording && time_has_elapsed(record_start_time, duration) {
+                stop_recording(&mut recording);
+            }
+        }
 
         while let Some(event) = libinput.next() {
             match event {
@@ -194,20 +281,18 @@ fn main() {
                     match uinput::Key::from(key as u8) {
                         RECORD_KEY => {
                             if key_state == KeyState::Released {
-                                recording = !recording;
-
                                 if recording {
-                                    // Flush the event_store
-                                    event_store.clear();
-                                    println!("Now recording.");
+                                    stop_recording(&mut recording);
                                 } else {
-                                    println!("Stopped recording.");
+                                    start_recording(&mut event_store, &mut recording, &mut record_start_time);
                                 }
                             }
                         },
                         REPLAY_KEY => {
                             if key_state == KeyState::Released {
-                                recording = false;
+                                if recording {
+                                    stop_recording(&mut recording);
+                                }
 
                                 libinput.suspend();
                                 replay_events(&options, &event_store, &mut uinput);
@@ -220,8 +305,6 @@ fn main() {
                             event_store.push(Keyboard(Key(key_event)));
                         },
                     }
-
-                    //println!("Key {} {:?} [+{}ms]", key, key_state, (time - prev_event_time) / 1000);
                 },
                 e => {
                     if recording {
