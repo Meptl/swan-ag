@@ -17,10 +17,10 @@ mod ioctl {
 
     ioctl!(none ui_dev_create with UINPUT_IOCTL_BASE, 1);
     ioctl!(none ui_dev_destroy with UINPUT_IOCTL_BASE, 2);
-    ioctl!(write set_ev_bit with UINPUT_IOCTL_BASE, 100; ::libc::c_int);
-    ioctl!(write set_key_bit with UINPUT_IOCTL_BASE, 101; ::libc::c_int);
-    ioctl!(write set_rel_bit with UINPUT_IOCTL_BASE, 102; ::libc::c_int);
-    ioctl!(write set_abs_bit with UINPUT_IOCTL_BASE, 103; ::libc::c_int);
+    ioctl!(write_ptr set_ev_bit with UINPUT_IOCTL_BASE, 100; ::libc::c_int);
+    ioctl!(write_ptr set_key_bit with UINPUT_IOCTL_BASE, 101; ::libc::c_int);
+    ioctl!(write_ptr set_rel_bit with UINPUT_IOCTL_BASE, 102; ::libc::c_int);
+    ioctl!(write_ptr set_abs_bit with UINPUT_IOCTL_BASE, 103; ::libc::c_int);
 }
 
 unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
